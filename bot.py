@@ -5,7 +5,7 @@ import re
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from telegram import Bot
+from telegram import Bot, ReplyKeyboardMarkup
 import logging
 
 # -----------------------------
@@ -20,7 +20,10 @@ log = logging.getLogger("watchbot")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 # Интервал проверки Reddit (секунды)
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))
+CHECK_INTERVAL_RSS = int(os.getenv("CHECK_INTERVAL", "60"))
+
+# Как часто опрашивать Telegram (секунды)
+TELEGRAM_POLL_INTERVAL = float(os.getenv("TELEGRAM_POLL_INTERVAL", "2"))
 
 # RSS-лента
 RSS_URL = os.getenv(
@@ -28,16 +31,9 @@ RSS_URL = os.getenv(
     "https://old.reddit.com/r/Watchexchange/new/.rss",
 )
 
-# Значения по умолчанию для НОВЫХ пользователей
-DEFAULT_KEYWORDS = os.getenv("DEFAULT_KEYWORDS", "seiko")
-DEFAULT_TRACKED_USERS = os.getenv(
-    "DEFAULT_TRACKED_USERS",
-    "ParentalAdvice,AudaciousCo"
-)
-
 log.info(f"RSS_URL = {RSS_URL}")
-log.info(f"Default keywords: {DEFAULT_KEYWORDS}")
-log.info(f"Default tracked users: {DEFAULT_TRACKED_USERS}")
+log.info(f"CHECK_INTERVAL_RSS = {CHECK_INTERVAL_RSS}")
+log.info(f"TELEGRAM_POLL_INTERVAL = {TELEGRAM_POLL_INTERVAL}")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
@@ -87,7 +83,8 @@ def load_users():
     {
       "123456789": {
           "keywords": ["seiko", "omega"],
-          "tracked_users": ["parentaladvice", "audaciousco"]
+          "tracked_users": ["parentaladvice", "audaciousco"],
+          "mode": null | "await_keywords" | "await_authors"
       },
       ...
     }
@@ -95,10 +92,11 @@ def load_users():
     try:
         with open(USERS_FILE, "r") as f:
             data = json.load(f)
-            # нормализуем авторов в lower
+            # нормализуем
             for chat_id, cfg in data.items():
                 cfg["keywords"] = [k.lower() for k in cfg.get("keywords", [])]
                 cfg["tracked_users"] = [u.lower() for u in cfg.get("tracked_users", [])]
+                cfg["mode"] = cfg.get("mode")
             log.info(f"Loaded users: {len(data)}")
             return data
     except FileNotFoundError:
@@ -197,16 +195,9 @@ def escape_html(text: str) -> str:
         return ""
     return (
         text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
+           .replace("<", "&lt;")
+           .replace(">", "&gt;")
     )
-
-
-# -----------------------------
-# TELEGRAM: обработка команд
-# -----------------------------
-
-last_update_id = None
 
 
 def parse_csv_list(s: str):
@@ -222,49 +213,68 @@ def parse_csv_list(s: str):
     return result
 
 
-def handle_command(chat_id: int, text: str):
+# -----------------------------
+# TELEGRAM UI
+# -----------------------------
+
+def main_keyboard():
+    return ReplyKeyboardMarkup(
+        [
+            ["➕ Keywords", "➕ Authors"],
+            ["📋 Settings"],
+        ],
+        resize_keyboard=True
+    )
+
+
+last_update_id = None
+
+
+def handle_text_message(chat_id: int, text: str):
     """
-    Обработка команд:
-    /start
-    /keywords ...
-    /authors ...
-    /help
+    Обработка ВСЕХ текстовых сообщений:
+    - команды (/start, /help, /keywords, /authors, /settings)
+    - нажатия кнопок (➕ Keywords / ➕ Authors / 📋 Settings)
+    - ввод значений в "режиме ожидания" (mode)
     """
     global users
-
     chat_id_str = str(chat_id)
     text = text.strip()
 
+    # гарантируем, что user-структура есть
+    if chat_id_str not in users:
+        users[chat_id_str] = {
+            "keywords": [],
+            "tracked_users": [],
+            "mode": None,
+        }
+
+    user_cfg = users[chat_id_str]
+    mode = user_cfg.get("mode")
+
+    # ----- команды -----
     if text.startswith("/start"):
-        # регистрируем или обновляем пользователя
-        if chat_id_str not in users:
-            default_keywords = [k.lower() for k in parse_csv_list(DEFAULT_KEYWORDS)]
-            default_authors = [u.lower() for u in parse_csv_list(DEFAULT_TRACKED_USERS)]
-            users[chat_id_str] = {
-                "keywords": default_keywords,
-                "tracked_users": default_authors
-            }
-            save_users(users)
-            bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    "👋 Hi! I've registered you.\n\n"
-                    f"Default keywords: {', '.join(users[chat_id_str]['keywords']) or 'none'}\n"
-                    f"Default tracked users: {', '.join(users[chat_id_str]['tracked_users']) or 'none'}\n\n"
-                    "You can change them with:\n"
-                    "/keywords seiko, omega, tudor\n"
-                    "/authors ParentalAdvice, AudaciousCo\n"
-                    "/settings to see current config."
-                )
-            )
-        else:
-            bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    "You're already registered.\n"
-                    "Use /settings to see your current config."
-                )
-            )
+        user_cfg.setdefault("keywords", [])
+        user_cfg.setdefault("tracked_users", [])
+        user_cfg["mode"] = None
+        save_users(users)
+
+        kw = ", ".join(user_cfg["keywords"]) or "none"
+        au = ", ".join(user_cfg["tracked_users"]) or "none"
+
+        bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "👋 Hi! I've registered you.\n\n"
+                f"Keywords: {kw}\n"
+                f"Tracked authors: {au}\n\n"
+                "Use the buttons below or commands:\n"
+                "/keywords seiko, omega\n"
+                "/authors ParentalAdvice, AudaciousCo\n"
+                "/settings - show current settings."
+            ),
+            reply_markup=main_keyboard()
+        )
         return
 
     if text.startswith("/help"):
@@ -275,31 +285,28 @@ def handle_command(chat_id: int, text: str):
                 "/start - register or show welcome\n"
                 "/keywords seiko, omega - set keywords\n"
                 "/authors ParentalAdvice, AudaciousCo - set tracked authors\n"
-                "/settings - show current settings"
-            )
+                "/settings - show your current settings\n\n"
+                "Or use the buttons below."
+            ),
+            reply_markup=main_keyboard()
         )
         return
 
-    if text.startswith("/settings"):
-        cfg = users.get(chat_id_str)
-        if not cfg:
-            bot.send_message(
-                chat_id=chat_id,
-                text="You are not registered yet. Send /start first."
-            )
-            return
-
-        kw = ", ".join(cfg.get("keywords", [])) or "none"
-        au = ", ".join(cfg.get("tracked_users", [])) or "none"
+    if text.startswith("/settings") or text == "📋 Settings":
+        kw = ", ".join(user_cfg.get("keywords", [])) or "none"
+        au = ", ".join(user_cfg.get("tracked_users", [])) or "none"
         bot.send_message(
             chat_id=chat_id,
             text=(
                 "📋 Your current settings:\n\n"
                 f"Keywords: {kw}\n"
                 f"Tracked authors: {au}\n\n"
-                "Use /keywords and /authors to change them."
-            )
+                "Use ➕ Keywords / ➕ Authors to update them."
+            ),
+            reply_markup=main_keyboard()
         )
+        user_cfg["mode"] = None
+        save_users(users)
         return
 
     if text.startswith("/keywords"):
@@ -307,18 +314,19 @@ def handle_command(chat_id: int, text: str):
         if not rest:
             bot.send_message(
                 chat_id=chat_id,
-                text="Usage: /keywords seiko, omega, tudor"
+                text="Usage: /keywords seiko, omega, tudor",
+                reply_markup=main_keyboard()
             )
             return
 
         kws = [k.lower() for k in parse_csv_list(rest)]
-        if chat_id_str not in users:
-            users[chat_id_str] = {"keywords": [], "tracked_users": []}
-        users[chat_id_str]["keywords"] = kws
+        user_cfg["keywords"] = kws
+        user_cfg["mode"] = None
         save_users(users)
         bot.send_message(
             chat_id=chat_id,
-            text=f"✅ Keywords updated: {', '.join(kws) if kws else 'none'}"
+            text=f"✅ Keywords updated: {', '.join(kws) if kws else 'none'}",
+            reply_markup=main_keyboard()
         )
         return
 
@@ -327,25 +335,83 @@ def handle_command(chat_id: int, text: str):
         if not rest:
             bot.send_message(
                 chat_id=chat_id,
-                text="Usage: /authors ParentalAdvice, AudaciousCo"
+                text="Usage: /authors ParentalAdvice, AudaciousCo",
+                reply_markup=main_keyboard()
             )
             return
 
         auths = [u.lower() for u in parse_csv_list(rest)]
-        if chat_id_str not in users:
-            users[chat_id_str] = {"keywords": [], "tracked_users": []}
-        users[chat_id_str]["tracked_users"] = auths
+        user_cfg["tracked_users"] = auths
+        user_cfg["mode"] = None
         save_users(users)
         bot.send_message(
             chat_id=chat_id,
-            text=f"✅ Tracked authors updated: {', '.join(auths) if auths else 'none'}"
+            text=f"✅ Tracked authors updated: {', '.join(auths) if auths else 'none'}",
+            reply_markup=main_keyboard()
         )
         return
 
-    # нераспознанная команда
+    # ----- кнопки -----
+    if text == "➕ Keywords":
+        user_cfg["mode"] = "await_keywords"
+        save_users(users)
+        bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "✍️ Send a list of keywords separated by commas.\n"
+                "Example:\n"
+                "`seiko, grand seiko, omega`"
+            ),
+            parse_mode="Markdown",
+            reply_markup=main_keyboard()
+        )
+        return
+
+    if text == "➕ Authors":
+        user_cfg["mode"] = "await_authors"
+        save_users(users)
+        bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "✍️ Send a list of Reddit usernames separated by commas.\n"
+                "Example:\n"
+                "`ParentalAdvice, AudaciousCo`"
+            ),
+            parse_mode="Markdown",
+            reply_markup=main_keyboard()
+        )
+        return
+
+    # ----- режим ожидания ввода -----
+    if mode == "await_keywords":
+        kws = [k.lower() for k in parse_csv_list(text)]
+        user_cfg["keywords"] = kws
+        user_cfg["mode"] = None
+        save_users(users)
+        bot.send_message(
+            chat_id=chat_id,
+            text=f"✅ Keywords updated: {', '.join(kws) if kws else 'none'}",
+            reply_markup=main_keyboard()
+        )
+        return
+
+    if mode == "await_authors":
+        auths = [u.lower() for u in parse_csv_list(text)]
+        user_cfg["tracked_users"] = auths
+        user_cfg["mode"] = None
+        save_users(users)
+        bot.send_message(
+            chat_id=chat_id,
+            text=f"✅ Tracked authors updated: {', '.join(auths) if auths else 'none'}",
+            reply_markup=main_keyboard()
+        )
+        return
+
+    # ----- если это не команда, не кнопка и не режим -----
     bot.send_message(
         chat_id=chat_id,
-        text="Unknown command. Use /help to see available commands."
+        text="I didn't understand that. Use /help or the buttons below.",
+        reply_markup=main_keyboard()
     )
 
 
@@ -353,9 +419,9 @@ def poll_telegram_updates():
     """
     Периодически опрашиваем Telegram, чтобы:
     - регистрировать новых пользователей (/start)
-    - обновлять их настройки (/keywords, /authors)
+    - обновлять их настройки (/keywords, /authors, кнопки)
     """
-    global last_update_id, users
+    global last_update_id
 
     try:
         kwargs = {}
@@ -370,7 +436,7 @@ def poll_telegram_updates():
                 chat_id = upd.message.chat.id
                 text = upd.message.text
                 log.info(f"Got Telegram message from {chat_id}: {text}")
-                handle_command(chat_id, text)
+                handle_text_message(chat_id, text)
     except Exception as e:
         log.error(f"Error polling Telegram updates: {e}")
 
@@ -380,92 +446,97 @@ def poll_telegram_updates():
 # -----------------------------
 log.info("Multi-user WatchExchange bot started (RSS mode)!")
 
+last_rss_check = 0
+
 while True:
-    try:
-        # 1) сначала обрабатываем команды от пользователей
-        poll_telegram_updates()
+    now = time.time()
 
-        # 2) затем проверяем Reddit
-        feed = fetch_feed(RSS_URL)
-        log.info(f"Fetched feed with {len(feed.entries)} entries")
+    # 1) быстро обрабатываем команды/кнопки
+    poll_telegram_updates()
 
-        for entry in feed.entries:
-            link = getattr(entry, "link", "") or ""
-            post_id = extract_post_id(link)
+    # 2) раз в CHECK_INTERVAL_RSS дергаем Reddit
+    if now - last_rss_check >= CHECK_INTERVAL_RSS:
+        try:
+            feed = fetch_feed(RSS_URL)
+            log.info(f"Fetched feed with {len(feed.entries)} entries")
 
-            raw_author = entry.get("author", "") or ""
-            author_norm = normalize_author(raw_author)
+            for entry in feed.entries:
+                link = getattr(entry, "link", "") or ""
+                post_id = extract_post_id(link)
 
-            title = getattr(entry, "title", "") or ""
-            title_lower = title.lower()
-            summary = entry.summary
+                raw_author = entry.get("author", "") or ""
+                author_norm = normalize_author(raw_author)
 
-            # если пост уже видели — пропускаем для всех
-            if post_id in seen_posts:
-                continue
+                title = getattr(entry, "title", "") or ""
+                title_lower = title.lower()
+                summary = entry.summary
 
-            # ищем превьюшку
-            image_url = extract_first_image_from_html(summary)
-
-            author_html = escape_html(author_norm or "unknown")
-            title_html = escape_html(title)
-
-            # 3) решаем, кому из users слать этот пост
-            for chat_id_str, cfg in users.items():
-                chat_id = int(chat_id_str)
-                user_keywords = cfg.get("keywords", [])
-                user_authors = cfg.get("tracked_users", [])
-
-                author_ok = author_norm in user_authors
-                keyword_ok = any(kw in title_lower for kw in user_keywords)
-
-                if not (author_ok or keyword_ok):
+                # если пост уже видели — пропускаем для всех
+                if post_id in seen_posts:
                     continue
 
-                if author_ok and keyword_ok:
-                    source_label = "tracked author + keyword match"
-                elif author_ok:
-                    source_label = "tracked author"
-                else:
-                    matched = [kw for kw in user_keywords if kw in title_lower]
-                    source_label = f"keyword match: {', '.join(matched) or 'unknown'}"
+                image_url = extract_first_image_from_html(summary)
 
-                source_html = escape_html(source_label)
+                author_html = escape_html(author_norm or "unknown")
+                title_html = escape_html(title)
 
-                message = (
-                    f"🕵️ New post ({source_html})\n\n"
-                    f"<b>Author:</b> {author_html}\n\n"
-                    f"<b>{title_html}</b>\n"
-                    f'<a href="{link}">Open post</a>'
-                )
+                # решаем, кому слать
+                for chat_id_str, cfg in users.items():
+                    chat_id = int(chat_id_str)
+                    user_keywords = cfg.get("keywords", [])
+                    user_authors = cfg.get("tracked_users", [])
 
-                try:
-                    if image_url:
-                        bot.send_photo(
-                            chat_id=chat_id,
-                            photo=image_url,
-                            caption=message,
-                            parse_mode="HTML",
-                        )
+                    author_ok = author_norm in user_authors
+                    keyword_ok = any(kw in title_lower for kw in user_keywords)
+
+                    if not (author_ok or keyword_ok):
+                        continue
+
+                    if author_ok and keyword_ok:
+                        source_label = "tracked author + keyword match"
+                    elif author_ok:
+                        source_label = "tracked author"
                     else:
-                        bot.send_message(
-                            chat_id=chat_id,
-                            text=message,
-                            parse_mode="HTML",
-                        )
-                    log.info(
-                        f"Sent post {post_id} to {chat_id} "
-                        f"(author_ok={author_ok}, keyword_ok={keyword_ok})"
+                        matched = [kw for kw in user_keywords if kw in title_lower]
+                        source_label = f"keyword match: {', '.join(matched) or 'unknown'}"
+
+                    source_html = escape_html(source_label)
+
+                    message = (
+                        f"🕵️ New post ({source_html})\n\n"
+                        f"<b>Author:</b> {author_html}\n\n"
+                        f"<b>{title_html}</b>\n"
+                        f'<a href="{link}">Open post</a>'
                     )
-                except Exception as e:
-                    log.error(f"Error sending message to {chat_id}: {e}")
 
-            # отметим пост как увиденный (чтобы второй раз никому не слать)
-            seen_posts.add(post_id)
-            save_seen(seen_posts)
+                    try:
+                        if image_url:
+                            bot.send_photo(
+                                chat_id=chat_id,
+                                photo=image_url,
+                                caption=message,
+                                parse_mode="HTML",
+                            )
+                        else:
+                            bot.send_message(
+                                chat_id=chat_id,
+                                text=message,
+                                parse_mode="HTML",
+                            )
+                        log.info(
+                            f"Sent post {post_id} to {chat_id} "
+                            f"(author_ok={author_ok}, keyword_ok={keyword_ok})"
+                        )
+                    except Exception as e:
+                        log.error(f"Error sending message to {chat_id}: {e}")
 
-    except Exception as e:
-        log.error(f"Error in main loop: {e}")
-        time.sleep(10)
+                seen_posts.add(post_id)
+                save_seen(seen_posts)
 
-    time.sleep(CHECK_INTERVAL)
+            last_rss_check = now
+
+        except Exception as e:
+            log.error(f"Error in RSS loop: {e}")
+
+    # 3) небольшой sleep, чтобы не жечь CPU
+    time.sleep(TELEGRAM_POLL_INTERVAL)
