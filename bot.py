@@ -94,7 +94,8 @@ def load_users():
             data = json.load(f)
             for chat_id, cfg in data.items():
                 cfg["keywords"] = [k.lower() for k in cfg.get("keywords", [])]
-                cfg["tracked_users"] = [u.lower() for u in cfg.get("tracked_users", [])]
+                cfg["tracked_users"] = [u.lower() for u in
+                                        cfg.get("tracked_users", [])]
                 cfg["mode"] = cfg.get("mode")
             log.info(f"Loaded users: {len(data)}")
             return data
@@ -119,6 +120,7 @@ def save_users(users):
 seen_posts = load_seen()
 users = load_users()
 
+
 # -----------------------------
 # HELPERS (Reddit / HTML)
 # -----------------------------
@@ -135,7 +137,8 @@ def fetch_feed(url: str):
             "User-Agent": "WatchExchangeTelegramBot/0.1 (by u/Vast_Requirement8134)"
         }
         resp = requests.get(url, headers=headers, timeout=10)
-        log.info(f"RSS HTTP status={resp.status_code}, length={len(resp.text)}")
+        log.info(
+            f"RSS HTTP status={resp.status_code}, length={len(resp.text)}")
         resp.raise_for_status()
 
         feed = feedparser.parse(resp.text)
@@ -189,13 +192,13 @@ def normalize_author(raw_author: str) -> str:
 
 
 def escape_html(text: str) -> str:
-    """Экранируем для HTML parse_mode."""
+    """На всякий случай, если захочешь HTML где-то ещё."""
     if not text:
         return ""
     return (
         text.replace("&", "&amp;")
-           .replace("<", "&lt;")
-           .replace(">", "&gt;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
     )
 
 
@@ -224,7 +227,6 @@ def handle_text_message(chat_id: int, text: str):
     Обработка текстовых сообщений:
     - команды: /start, /help, /settings, /keywords, /authors
     - режим ожидания: ввод keywords/authors после явного запроса
-      (мы оставим режим, но без кнопок — можно будет использовать дальше, если захочешь)
     """
     global users
     chat_id_str = str(chat_id)
@@ -241,7 +243,7 @@ def handle_text_message(chat_id: int, text: str):
     user_cfg = users[chat_id_str]
     mode = user_cfg.get("mode")
 
-    # ----- команды -----
+    # ----- /start -----
     if text.startswith("/start"):
         user_cfg.setdefault("keywords", [])
         user_cfg.setdefault("tracked_users", [])
@@ -294,7 +296,7 @@ def handle_text_message(chat_id: int, text: str):
             "This bot is free to use and has no ads.\n"
             "If it helps you save time or catch good offers,\n"
             "you can support the project by buying me a coffee:\n\n"
-            "https://www.buymeacoffee.com/blackemcee\n\n"
+            "https://www.buymeacoffee.com/yourname\n\n"
             "Completely optional — but very appreciated ❤️\n\n"
 
             "==============================\n"
@@ -308,41 +310,82 @@ def handle_text_message(chat_id: int, text: str):
         )
         return
 
+    # ----- /help -----
     if text.startswith("/help"):
-        bot.send_message(
-            chat_id=chat_id,
-            text=(
-                "Commands:\n"
-                "/start    — register or show welcome\n"
-                "/keywords seiko, omega, tudor — set keywords\n"
-                "/keywords clear              — remove all keywords\n"
-                "/authors ParentalAdvice, AudaciousCo — set tracked authors\n"
-                "/authors clear                        — remove all authors\n"
-                "/settings — show your current settings"
-            )
+        help_message = (
+            "==============================\n"
+            "📘 HELP\n"
+            "==============================\n\n"
+            "This bot sends you alerts about new Reddit posts based on two filters:\n"
+            "- tracked authors\n"
+            "- keywords in the title\n\n"
+            "You receive a post if it matches EITHER filter.\n\n"
+
+            "==============================\n"
+            "⚙️ AVAILABLE COMMANDS\n"
+            "==============================\n\n"
+
+            "/start\n"
+            "  Show the introduction and basic setup info.\n\n"
+
+            "/settings\n"
+            "  Display your current keywords and tracked authors.\n\n"
+
+            "/keywords word1, word2, word3\n"
+            "  Replace your keyword list in one step.\n"
+            "  Example: /keywords seiko, omega, grand seiko\n\n"
+            "/keywords clear\n"
+            "  Remove all keywords.\n\n"
+            "/keywords\n"
+            "  Without arguments: the bot will ask you in the next message\n"
+            "  to send a list of keywords separated by commas.\n\n"
+
+            "/authors name1, name2\n"
+            "  Replace your tracked authors list in one step.\n"
+            "  Example: /authors WatchTrader247, DealsAreLife\n\n"
+            "/authors clear\n"
+            "  Remove all tracked authors.\n\n"
+            "/authors\n"
+            "  Without arguments: the bot will ask you in the next message\n"
+            "  to send a list of Reddit usernames separated by commas.\n\n"
+
+            "==============================\n"
+            "💡 TIPS\n"
+            "==============================\n\n"
+            "- Keywords are case-insensitive.\n"
+            "- You can use only keywords, only authors, or both.\n"
+            "- If you receive no alerts, check your /settings.\n"
+            "- The bot checks Reddit every 1–2 minutes.\n\n"
+
+            "==============================\n"
+            "Need help? Just send /start or /help again.\n"
         )
+
+        bot.send_message(chat_id=chat_id, text=help_message)
         user_cfg["mode"] = None
         save_users(users)
         return
 
+    # ----- /settings -----
     if text.startswith("/settings"):
         kw = ", ".join(user_cfg.get("keywords", [])) or "none"
         au = ", ".join(user_cfg.get("tracked_users", [])) or "none"
-        bot.send_message(
-            chat_id=chat_id,
-            text=(
-                "📋 Your current settings:\n\n"
-                f"Keywords: {kw}\n"
-                f"Tracked authors: {au}\n\n"
-                "Use /keywords and /authors to modify them."
-            )
+        msg = (
+            "📋 Your current settings:\n\n"
+            f"Keywords: {kw}\n"
+            f"Tracked authors: {au}\n\n"
+            "Use /keywords and /authors to modify them.\n"
+            "Type /help to see full instructions."
         )
+        bot.send_message(chat_id=chat_id, text=msg)
         user_cfg["mode"] = None
         save_users(users)
         return
 
+    # ----- /keywords -----
     if text.startswith("/keywords"):
         rest = text[len("/keywords"):].strip()
+
         # /keywords clear
         if rest.lower() == "clear":
             user_cfg["keywords"] = []
@@ -354,17 +397,21 @@ def handle_text_message(chat_id: int, text: str):
             )
             return
 
+        # /keywords без аргументов → диалоговый режим
         if not rest:
+            user_cfg["mode"] = "await_keywords"
+            save_users(users)
             bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    "Usage:\n"
-                    "/keywords seiko, omega, tudor\n"
-                    "/keywords clear"
+                    "Send a list of keywords separated by commas.\n"
+                    "Example:\n"
+                    "seiko, grand seiko, omega"
                 )
             )
             return
 
+        # /keywords с аргументами → сразу сохраним
         kws = [k.lower() for k in parse_csv_list(rest)]
         user_cfg["keywords"] = kws
         user_cfg["mode"] = None
@@ -375,8 +422,10 @@ def handle_text_message(chat_id: int, text: str):
         )
         return
 
+    # ----- /authors -----
     if text.startswith("/authors"):
         rest = text[len("/authors"):].strip()
+
         # /authors clear
         if rest.lower() == "clear":
             user_cfg["tracked_users"] = []
@@ -388,17 +437,21 @@ def handle_text_message(chat_id: int, text: str):
             )
             return
 
+        # /authors без аргументов → диалоговый режим
         if not rest:
+            user_cfg["mode"] = "await_authors"
+            save_users(users)
             bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    "Usage:\n"
-                    "/authors ParentalAdvice, AudaciousCo\n"
-                    "/authors clear"
+                    "Send a list of Reddit usernames separated by commas.\n"
+                    "Example:\n"
+                    "WatchTrader247, DealsAreLife, TimepieceWizard"
                 )
             )
             return
 
+        # /authors с аргументами
         auths = [u.lower() for u in parse_csv_list(rest)]
         user_cfg["tracked_users"] = auths
         user_cfg["mode"] = None
@@ -409,7 +462,7 @@ def handle_text_message(chat_id: int, text: str):
         )
         return
 
-    # ----- режимы (если вдруг решишь использовать дальше) -----
+    # ----- режимы ожидания (после пустых /keywords и /authors) -----
     if mode == "await_keywords":
         kws = [k.lower() for k in parse_csv_list(text)]
         user_cfg["keywords"] = kws
@@ -521,16 +574,17 @@ while True:
                     elif author_ok:
                         source_label = "tracked author"
                     else:
-                        matched = [kw for kw in user_keywords if kw in title_lower]
+                        matched = [kw for kw in user_keywords if
+                                   kw in title_lower]
                         source_label = f"keyword match: {', '.join(matched) or 'unknown'}"
 
                     source_html = escape_html(source_label)
 
                     message = (
                         f"🕵️ New post ({source_html})\n\n"
-                        f"<b>Author:</b> {author_html}\n\n"
-                        f"<b>{title_html}</b>\n"
-                        f'<a href="{link}">Open post</a>'
+                        f"Author: {author_html}\n\n"
+                        f"{title_html}\n"
+                        f"{link}"
                     )
 
                     try:
@@ -539,13 +593,11 @@ while True:
                                 chat_id=chat_id,
                                 photo=image_url,
                                 caption=message,
-                                parse_mode="HTML",
                             )
                         else:
                             bot.send_message(
                                 chat_id=chat_id,
                                 text=message,
-                                parse_mode="HTML",
                             )
                         log.info(
                             f"Sent post {post_id} to {chat_id} "
