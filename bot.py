@@ -248,22 +248,64 @@ def handle_text_message(chat_id: int, text: str):
         user_cfg["mode"] = None
         save_users(users)
 
-        kw = ", ".join(user_cfg["keywords"]) or "none"
-        au = ", ".join(user_cfg["tracked_users"]) or "none"
+        welcome_message = (
+            "👋 <b>Welcome!</b>\n\n"
+            "This bot sends you alerts about new posts from Reddit subreddits such as r/Watchexchange.\n"
+            "You choose what you want to follow using two independent filters.\n\n"
+
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🔍 <b>HOW FILTERS WORK</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "You will receive a post if <b>ANY</b> of these is true:\n\n"
+            "1️⃣ The author is in your tracked authors list\n"
+            "2️⃣ The title contains one of your keywords\n\n"
+            "These filters work independently (logical OR):\n\n"
+            "• Only authors set → you get all posts from them\n"
+            "• Only keywords set → you get all posts containing them\n"
+            "• Both set → you get everything matching either filter\n"
+            "• Both empty → you receive nothing\n\n"
+
+            "━━━━━━━━━━━━━━━━━━\n"
+            "⚙️ <b>SETTING YOUR FILTERS</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "📌 Set or replace keywords:\n"
+            "<code>/keywords seiko, omega, tudor</code>\n\n"
+            "🗑️ Clear all keywords:\n"
+            "<code>/keywords clear</code>\n\n"
+            "👤 Set tracked authors:\n"
+            "<code>/authors WatchTrader247, DealsAreLife, TimepieceWizard</code>\n\n"
+            "🗑️ Clear tracked authors:\n"
+            "<code>/authors clear</code>\n\n"
+            "📋 View your current settings:\n"
+            "<code>/settings</code>\n\n"
+
+            "━━━━━━━━━━━━━━━━━━\n"
+            "💡 <b>TIPS</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "• Keywords are case-insensitive\n"
+            "• Add as many keywords or authors as you want\n"
+            "• Bot checks Reddit every 1–2 minutes\n"
+            "• You can use only keywords, only authors, or both\n"
+            "• If no alerts arrive, check your settings with /settings\n\n"
+
+            "━━━━━━━━━━━━━━━━━━\n"
+            "☕ <b>APPRECIATE THE BOT?</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "This bot is free to use and has no ads.\n"
+            "If it helps you save time or catch good offers,\n"
+            "you can support the project by buying me a coffee:\n\n"
+            "👉 https://www.buymeacoffee.com/<yourname>\n\n"
+            "Totally optional — but very appreciated ❤️\n\n"
+
+            "━━━━━━━━━━━━━━━━━━\n"
+            "✓ You're all set!\n"
+            "Use <code>/help</code> anytime to see available commands."
+        )
 
         bot.send_message(
             chat_id=chat_id,
-            text=(
-                "👋 Hi! I've registered you.\n\n"
-                f"Keywords: {kw}\n"
-                f"Tracked authors: {au}\n\n"
-                "Commands:\n"
-                "/keywords seiko, omega, tudor\n"
-                "/keywords clear  — remove all keywords\n"
-                "/authors ParentalAdvice, AudaciousCo\n"
-                "/authors clear  — remove all authors\n"
-                "/settings        — show current settings"
-            )
+            text=welcome_message,
+            parse_mode="HTML"
         )
         return
 
