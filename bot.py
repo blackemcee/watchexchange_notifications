@@ -294,7 +294,7 @@ def handle_text_message(chat_id: int, text: str):
             "This bot is free to use and has no ads.\n"
             "If it helps you save time or catch good offers,\n"
             "you can support the project by buying me a coffee:\n\n"
-            "👉 https://www.buymeacoffee.com/<yourname>\n\n"
+            "👉 https://www.buymeacoffee.com/blackemcee\n\n"
             "Totally optional — but very appreciated ❤️\n\n"
 
             "━━━━━━━━━━━━━━━━━━\n"
