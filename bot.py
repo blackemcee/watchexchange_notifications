@@ -251,10 +251,6 @@ def handle_text_message(chat_id: int, text: str):
         save_users(users)
 
         welcome_message = (
-            "👋 Welcome!\n\n"
-            "This bot sends you alerts about new posts from Reddit subreddits such as r/Watchexchange.\n"
-            "You choose what you want to follow using two independent filters.\n\n"
-
             "==============================\n"
             "🔍 HOW FILTERS WORK\n"
             "==============================\n\n"
@@ -289,19 +285,6 @@ def handle_text_message(chat_id: int, text: str):
             "- The bot checks Reddit every 1–2 minutes\n"
             "- You can use only keywords, only authors, or both\n"
             "- If no alerts arrive, check your /settings\n\n"
-
-            "==============================\n"
-            "☕ APPRECIATE THE BOT?\n"
-            "==============================\n\n"
-            "This bot is free to use and has no ads.\n"
-            "If it helps you save time or catch good offers,\n"
-            "you can support the project by buying me a coffee:\n\n"
-            "https://www.buymeacoffee.com/yourname\n\n"
-            "Completely optional — but very appreciated ❤️\n\n"
-
-            "==============================\n"
-            "You're all set!\n"
-            "Use /help anytime to see available commands."
         )
 
         bot.send_message(
