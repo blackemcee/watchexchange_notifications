@@ -5,7 +5,7 @@ import re
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from telegram import Bot, ReplyKeyboardMarkup
+from telegram import Bot
 import logging
 
 # -----------------------------
@@ -92,7 +92,6 @@ def load_users():
     try:
         with open(USERS_FILE, "r") as f:
             data = json.load(f)
-            # нормализуем
             for chat_id, cfg in data.items():
                 cfg["keywords"] = [k.lower() for k in cfg.get("keywords", [])]
                 cfg["tracked_users"] = [u.lower() for u in cfg.get("tracked_users", [])]
@@ -214,28 +213,18 @@ def parse_csv_list(s: str):
 
 
 # -----------------------------
-# TELEGRAM UI
+# TELEGRAM
 # -----------------------------
-
-def main_keyboard():
-    return ReplyKeyboardMarkup(
-        [
-            ["➕ Keywords", "➕ Authors"],
-            ["📋 Settings"],
-        ],
-        resize_keyboard=True
-    )
-
 
 last_update_id = None
 
 
 def handle_text_message(chat_id: int, text: str):
     """
-    Обработка ВСЕХ текстовых сообщений:
-    - команды (/start, /help, /keywords, /authors, /settings)
-    - нажатия кнопок (➕ Keywords / ➕ Authors / 📋 Settings)
-    - ввод значений в "режиме ожидания" (mode)
+    Обработка текстовых сообщений:
+    - команды: /start, /help, /settings, /keywords, /authors
+    - режим ожидания: ввод keywords/authors после явного запроса
+      (мы оставим режим, но без кнопок — можно будет использовать дальше, если захочешь)
     """
     global users
     chat_id_str = str(chat_id)
@@ -268,12 +257,13 @@ def handle_text_message(chat_id: int, text: str):
                 "👋 Hi! I've registered you.\n\n"
                 f"Keywords: {kw}\n"
                 f"Tracked authors: {au}\n\n"
-                "Use the buttons below or commands:\n"
-                "/keywords seiko, omega\n"
+                "Commands:\n"
+                "/keywords seiko, omega, tudor\n"
+                "/keywords clear  — remove all keywords\n"
                 "/authors ParentalAdvice, AudaciousCo\n"
-                "/settings - show current settings."
-            ),
-            reply_markup=main_keyboard()
+                "/authors clear  — remove all authors\n"
+                "/settings        — show current settings"
+            )
         )
         return
 
@@ -282,17 +272,19 @@ def handle_text_message(chat_id: int, text: str):
             chat_id=chat_id,
             text=(
                 "Commands:\n"
-                "/start - register or show welcome\n"
-                "/keywords seiko, omega - set keywords\n"
-                "/authors ParentalAdvice, AudaciousCo - set tracked authors\n"
-                "/settings - show your current settings\n\n"
-                "Or use the buttons below."
-            ),
-            reply_markup=main_keyboard()
+                "/start    — register or show welcome\n"
+                "/keywords seiko, omega, tudor — set keywords\n"
+                "/keywords clear              — remove all keywords\n"
+                "/authors ParentalAdvice, AudaciousCo — set tracked authors\n"
+                "/authors clear                        — remove all authors\n"
+                "/settings — show your current settings"
+            )
         )
+        user_cfg["mode"] = None
+        save_users(users)
         return
 
-    if text.startswith("/settings") or text == "📋 Settings":
+    if text.startswith("/settings"):
         kw = ", ".join(user_cfg.get("keywords", [])) or "none"
         au = ", ".join(user_cfg.get("tracked_users", [])) or "none"
         bot.send_message(
@@ -301,9 +293,8 @@ def handle_text_message(chat_id: int, text: str):
                 "📋 Your current settings:\n\n"
                 f"Keywords: {kw}\n"
                 f"Tracked authors: {au}\n\n"
-                "Use ➕ Keywords / ➕ Authors to update them."
-            ),
-            reply_markup=main_keyboard()
+                "Use /keywords and /authors to modify them."
+            )
         )
         user_cfg["mode"] = None
         save_users(users)
@@ -311,11 +302,25 @@ def handle_text_message(chat_id: int, text: str):
 
     if text.startswith("/keywords"):
         rest = text[len("/keywords"):].strip()
+        # /keywords clear
+        if rest.lower() == "clear":
+            user_cfg["keywords"] = []
+            user_cfg["mode"] = None
+            save_users(users)
+            bot.send_message(
+                chat_id=chat_id,
+                text="🗑️ All keywords removed."
+            )
+            return
+
         if not rest:
             bot.send_message(
                 chat_id=chat_id,
-                text="Usage: /keywords seiko, omega, tudor",
-                reply_markup=main_keyboard()
+                text=(
+                    "Usage:\n"
+                    "/keywords seiko, omega, tudor\n"
+                    "/keywords clear"
+                )
             )
             return
 
@@ -325,18 +330,31 @@ def handle_text_message(chat_id: int, text: str):
         save_users(users)
         bot.send_message(
             chat_id=chat_id,
-            text=f"✅ Keywords updated: {', '.join(kws) if kws else 'none'}",
-            reply_markup=main_keyboard()
+            text=f"✅ Keywords updated: {', '.join(kws) if kws else 'none'}"
         )
         return
 
     if text.startswith("/authors"):
         rest = text[len("/authors"):].strip()
+        # /authors clear
+        if rest.lower() == "clear":
+            user_cfg["tracked_users"] = []
+            user_cfg["mode"] = None
+            save_users(users)
+            bot.send_message(
+                chat_id=chat_id,
+                text="🗑️ All tracked authors removed."
+            )
+            return
+
         if not rest:
             bot.send_message(
                 chat_id=chat_id,
-                text="Usage: /authors ParentalAdvice, AudaciousCo",
-                reply_markup=main_keyboard()
+                text=(
+                    "Usage:\n"
+                    "/authors ParentalAdvice, AudaciousCo\n"
+                    "/authors clear"
+                )
             )
             return
 
@@ -346,43 +364,11 @@ def handle_text_message(chat_id: int, text: str):
         save_users(users)
         bot.send_message(
             chat_id=chat_id,
-            text=f"✅ Tracked authors updated: {', '.join(auths) if auths else 'none'}",
-            reply_markup=main_keyboard()
+            text=f"✅ Tracked authors updated: {', '.join(auths) if auths else 'none'}"
         )
         return
 
-    # ----- кнопки -----
-    if text == "➕ Keywords":
-        user_cfg["mode"] = "await_keywords"
-        save_users(users)
-        bot.send_message(
-            chat_id=chat_id,
-            text=(
-                "✍️ Send a list of keywords separated by commas.\n"
-                "Example:\n"
-                "`seiko, grand seiko, omega`"
-            ),
-            parse_mode="Markdown",
-            reply_markup=main_keyboard()
-        )
-        return
-
-    if text == "➕ Authors":
-        user_cfg["mode"] = "await_authors"
-        save_users(users)
-        bot.send_message(
-            chat_id=chat_id,
-            text=(
-                "✍️ Send a list of Reddit usernames separated by commas.\n"
-                "Example:\n"
-                "`ParentalAdvice, AudaciousCo`"
-            ),
-            parse_mode="Markdown",
-            reply_markup=main_keyboard()
-        )
-        return
-
-    # ----- режим ожидания ввода -----
+    # ----- режимы (если вдруг решишь использовать дальше) -----
     if mode == "await_keywords":
         kws = [k.lower() for k in parse_csv_list(text)]
         user_cfg["keywords"] = kws
@@ -390,8 +376,7 @@ def handle_text_message(chat_id: int, text: str):
         save_users(users)
         bot.send_message(
             chat_id=chat_id,
-            text=f"✅ Keywords updated: {', '.join(kws) if kws else 'none'}",
-            reply_markup=main_keyboard()
+            text=f"✅ Keywords updated: {', '.join(kws) if kws else 'none'}"
         )
         return
 
@@ -402,16 +387,14 @@ def handle_text_message(chat_id: int, text: str):
         save_users(users)
         bot.send_message(
             chat_id=chat_id,
-            text=f"✅ Tracked authors updated: {', '.join(auths) if auths else 'none'}",
-            reply_markup=main_keyboard()
+            text=f"✅ Tracked authors updated: {', '.join(auths) if auths else 'none'}"
         )
         return
 
-    # ----- если это не команда, не кнопка и не режим -----
+    # ----- всё остальное -----
     bot.send_message(
         chat_id=chat_id,
-        text="I didn't understand that. Use /help or the buttons below.",
-        reply_markup=main_keyboard()
+        text="I didn't understand that. Use /help to see available commands."
     )
 
 
@@ -419,7 +402,7 @@ def poll_telegram_updates():
     """
     Периодически опрашиваем Telegram, чтобы:
     - регистрировать новых пользователей (/start)
-    - обновлять их настройки (/keywords, /authors, кнопки)
+    - обновлять их настройки (/keywords, /authors)
     """
     global last_update_id
 
@@ -451,7 +434,7 @@ last_rss_check = 0
 while True:
     now = time.time()
 
-    # 1) быстро обрабатываем команды/кнопки
+    # 1) быстро обрабатываем команды/сообщения
     poll_telegram_updates()
 
     # 2) раз в CHECK_INTERVAL_RSS дергаем Reddit
