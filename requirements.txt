@@ -1,0 +1,4 @@
+python-telegram-bot==13.15
+feedparser==6.0.11
+beautifulsoup4==4.12.3
+requests==2.31.0
