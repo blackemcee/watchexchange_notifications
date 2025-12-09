@@ -83,7 +83,8 @@ def load_users():
     {
       "123456789": {
           "keywords": ["seiko", "omega"],
-          "tracked_users": ["parentaladvice", "audaciousco"]
+          "tracked_users": ["parentaladvice", "audaciousco"],
+          "paused": false
       },
       ...
     }
@@ -94,6 +95,7 @@ def load_users():
             for chat_id, cfg in data.items():
                 cfg["keywords"] = [k.lower() for k in cfg.get("keywords", [])]
                 cfg["tracked_users"] = [u.lower() for u in cfg.get("tracked_users", [])]
+                cfg["paused"] = bool(cfg.get("paused", False))
             log.info(f"Loaded users: {len(data)}")
             return data
     except FileNotFoundError:
@@ -220,7 +222,7 @@ last_update_id = None
 def handle_text_message(chat_id: int, text: str):
     """
     Обработка текстовых сообщений:
-    - команды: /start, /help, /settings, /keywords, /authors
+    - команды: /start, /help, /settings, /keywords, /authors, /pause, /resume
     """
     global users
     chat_id_str = str(chat_id)
@@ -231,6 +233,7 @@ def handle_text_message(chat_id: int, text: str):
         users[chat_id_str] = {
             "keywords": [],
             "tracked_users": [],
+            "paused": False,
         }
 
     user_cfg = users[chat_id_str]
@@ -239,7 +242,10 @@ def handle_text_message(chat_id: int, text: str):
     if text.startswith("/start"):
         user_cfg.setdefault("keywords", [])
         user_cfg.setdefault("tracked_users", [])
+        user_cfg.setdefault("paused", False)
         save_users(users)
+
+        paused_text = "paused" if user_cfg.get("paused") else "active"
 
         welcome_message = (
             "==============================\n"
@@ -266,6 +272,9 @@ def handle_text_message(chat_id: int, text: str):
             "/authors clear\n\n"
             "View your current settings:\n"
             "/settings\n\n"
+            "Pause / resume alerts:\n"
+            "/pause  /resume\n\n"
+            f"Current alert status: {paused_text}\n\n"
             "Use /help for more details.\n"
         )
 
@@ -291,7 +300,7 @@ def handle_text_message(chat_id: int, text: str):
             "/start\n"
             "  Show the introduction and basic setup info.\n\n"
             "/settings\n"
-            "  Display your current keywords and tracked authors.\n\n"
+            "  Display your current keywords, tracked authors and pause status.\n\n"
             "/keywords word1, word2, word3\n"
             "  Replace your keyword list in one step.\n"
             "  Example: /keywords seiko, omega, grand seiko\n\n"
@@ -308,12 +317,17 @@ def handle_text_message(chat_id: int, text: str):
             "/authors\n"
             "  Without arguments: show your current tracked authors and\n"
             "  a short hint on how to set them.\n\n"
+            "/pause\n"
+            "  Temporarily stop receiving alerts (your filters are preserved).\n\n"
+            "/resume\n"
+            "  Resume alerts using your current filters.\n\n"
             "==============================\n"
             "💡 TIPS\n"
             "==============================\n\n"
             "- Keywords are case-insensitive.\n"
             "- You can use only keywords, only authors, or both.\n"
             "- If you receive no alerts, check your /settings.\n"
+            "- Use /pause if you need a break, /resume to continue.\n"
             "- The bot checks Reddit every 1–2 minutes.\n\n"
             "==============================\n"
             "Need help? Just send /start or /help again.\n"
@@ -327,15 +341,39 @@ def handle_text_message(chat_id: int, text: str):
     if text.startswith("/settings"):
         kw = ", ".join(user_cfg.get("keywords", [])) or "none"
         au = ", ".join(user_cfg.get("tracked_users", [])) or "none"
+        paused = user_cfg.get("paused", False)
+        status = "paused" if paused else "active"
         msg = (
             "📋 Your current settings:\n\n"
             f"Keywords: {kw}\n"
-            f"Tracked authors: {au}\n\n"
-            "Use /keywords and /authors to modify them.\n"
+            f"Tracked authors: {au}\n"
+            f"Alerts status: {status}\n\n"
+            "Use /keywords and /authors to modify filters.\n"
+            "Use /pause or /resume to control alerts.\n"
             "Type /help to see full instructions."
         )
         bot.send_message(chat_id=chat_id, text=msg)
         save_users(users)
+        return
+
+    # ----- /pause -----
+    if text.startswith("/pause"):
+        user_cfg["paused"] = True
+        save_users(users)
+        bot.send_message(
+            chat_id=chat_id,
+            text="⏸ Alerts paused. You will not receive new post notifications until you use /resume."
+        )
+        return
+
+    # ----- /resume -----
+    if text.startswith("/resume"):
+        user_cfg["paused"] = False
+        save_users(users)
+        bot.send_message(
+            chat_id=chat_id,
+            text="▶ Alerts resumed. You will receive notifications based on your current filters."
+        )
         return
 
     # ----- /keywords -----
@@ -429,7 +467,7 @@ def poll_telegram_updates():
     """
     Периодически опрашиваем Telegram, чтобы:
     - регистрировать новых пользователей (/start)
-    - обновлять их настройки (/keywords, /authors)
+    - обновлять их настройки (/keywords, /authors, /pause, /resume)
     """
     global last_update_id
 
@@ -495,6 +533,11 @@ while True:
                     chat_id = int(chat_id_str)
                     user_keywords = cfg.get("keywords", [])
                     user_authors = cfg.get("tracked_users", [])
+                    paused = cfg.get("paused", False)
+
+                    # если пользователь на паузе — ничего не шлём
+                    if paused:
+                        continue
 
                     author_ok = author_norm in user_authors
                     keyword_ok = any(kw in title_lower for kw in user_keywords)
@@ -533,7 +576,7 @@ while True:
                             )
                         log.info(
                             f"Sent post {post_id} to {chat_id} "
-                            f"(author_ok={author_ok}, keyword_ok={keyword_ok})"
+                            f"(author_ok={author_ok}, keyword_ok={keyword_ok}, paused={paused})"
                         )
                     except Exception as e:
                         log.error(f"Error sending message to {chat_id}: {e}")
